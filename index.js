@@ -2,36 +2,15 @@
 
 const _ = require('lodash');
 
-let _cloudWatchLogsService = null;
-let _cloudFormationService = null;
-
 class ServerlessCloudWatchLogsTagPlugin {
-
-  get stackName() {
-    return `${this.serverless.service.service}-${this.options.stage}`;
-  }
-
-  get logGroupService() {
-
-    if (!_cloudWatchLogsService)
-      _cloudWatchLogsService = new this.awsService.sdk.CloudWatchLogs({ region: this.options.region });
-
-    return _cloudWatchLogsService;
-  }
-
-  get cloudWatchLogsService() {
-
-    if (!_cloudFormationService)
-      _cloudFormationService = new this.awsService.sdk.CloudFormation({ region: this.options.region });
-
-    return _cloudFormationService;
-  }
-
   constructor(serverless, options) {
-
-    this.options = options;
     this.serverless = serverless;
-    this.awsService = this.serverless.getProvider('aws');
+    this.options = options || {};
+
+    this.provider = this.serverless.getProvider('aws');
+    this.region = this.provider.getRegion();
+    this.stage = this.provider.getStage();
+    this.tags = this.serverless.service.custom.cloudWatchLogsTags;
 
     this.hooks = {
       'after:deploy:deploy': this.execute.bind(this),
@@ -46,29 +25,35 @@ class ServerlessCloudWatchLogsTagPlugin {
   }
 
   getStackResources() {
-    return new Promise((resolve, reject) => {
-      this.cloudWatchLogsService.describeStackResources({ StackName: this.stackName }, (err, data) => {
-        if (err) return reject(err);
-        resolve(data);
-      });
-    });
+    const stackName = this.provider.naming.getStackName(this.options.stage);
+
+    return this.provider.request(
+      'CloudFormation',
+      'describeStackResources',
+      { StackName: stackName },
+      this.stage,
+      this.region,
+    );
   }
 
   tagCloudWatchLogs(data) {
-
     const cloudWatchResources = _.filter(data.StackResources, { ResourceType: 'AWS::Logs::LogGroup' });
 
     const promises = _.map(cloudWatchResources, item => {
       return new Promise((resolve, reject) => {
-
-        const params = {
-          logGroupName: item.PhysicalResourceId,
-          tags: this.serverless.service.custom.cloudWatchLogsTags
-        };
-
-        this.logGroupService.tagLogGroup(params, (err, apiData) => {
-          if (err) return reject(err);
+        this.provider.request(
+          'CloudWatchLogs',
+          'tagLogGroup',
+          {
+            logGroupName: item.PhysicalResourceId,
+            tags: this.tags,
+          },
+          this.stage,
+          this.region,
+        ).then(() => {
           resolve(`Tagged LogGroup ${item.LogicalResourceId}`);
+        }).catch((err) => {
+          reject(err);
         });
       });
     });
