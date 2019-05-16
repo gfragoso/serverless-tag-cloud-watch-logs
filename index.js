@@ -45,18 +45,20 @@ class ServerlessCloudWatchLogsTagPlugin {
       .catch(err => this.serverless.cli.log(JSON.stringify(err)));
   }
 
-  getStackResources() {
-    return new Promise((resolve, reject) => {
-      this.cloudWatchLogsService.describeStackResources({ StackName: this.stackName }, (err, data) => {
-        if (err) return reject(err);
-        resolve(data);
-      });
-    });
+  getStackResources(nextToken) {
+    const getData = async (acc = [], nextToken) => {
+      const data = await this.cloudWatchLogsService.listStackResources({ StackName: this.stackName, NextToken: nextToken }).promise();
+      if (data.NextToken) {
+        return getData([...acc, ...data.StackResourceSummaries], data.NextToken);
+      } else {
+        return [...acc, ...data.StackResourceSummaries];
+      }
+    }
+    return getData();
   }
 
   tagCloudWatchLogs(data) {
-
-    const cloudWatchResources = _.filter(data.StackResources, { ResourceType: 'AWS::Logs::LogGroup' });
+    const cloudWatchResources = _.filter(data, { ResourceType: 'AWS::Logs::LogGroup' });
 
     const promises = _.map(cloudWatchResources, item => {
       return new Promise((resolve, reject) => {
